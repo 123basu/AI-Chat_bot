@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "chat_memory.db")
 
@@ -38,6 +39,13 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, fact_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS chunk_embeddings (
+            source TEXT NOT NULL,
+            chunk_id INTEGER NOT NULL,
+            embedding TEXT NOT NULL,
+            PRIMARY KEY (source, chunk_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -144,3 +152,25 @@ def get_all_facts(user_id: str) -> dict:
     ).fetchall()
     conn.close()
     return {r["fact_key"]: r["fact_value"] for r in rows}
+
+
+def get_chunk_embedding(source: str, chunk_id: int) -> list[float] | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT embedding FROM chunk_embeddings WHERE source = ? AND chunk_id = ?",
+        (source, chunk_id),
+    ).fetchone()
+    conn.close()
+    if row:
+        return json.loads(row["embedding"])
+    return None
+
+
+def save_chunk_embedding(source: str, chunk_id: int, embedding: list[float]):
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO chunk_embeddings (source, chunk_id, embedding) VALUES (?, ?, ?)",
+        (source, chunk_id, json.dumps(embedding)),
+    )
+    conn.commit()
+    conn.close()

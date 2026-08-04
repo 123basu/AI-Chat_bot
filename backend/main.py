@@ -18,6 +18,7 @@ from memory_store import (
     get_user_sessions,
 )
 from tools import route_tool
+from rag import retrieve
 
 load_dotenv()
 
@@ -38,6 +39,30 @@ app.add_middleware(
 
 MAX_EXCHANGES = 20
 FACT_EXTRACT_INTERVAL = 3
+RAG_TOP_K = 3
+
+RAG_SYSTEM_PROMPT = """You are a company assistant. Answer the user's question using ONLY the information in the provided context below.
+
+Rules:
+- Base your answer strictly on the context. Do not use outside knowledge.
+- If the answer cannot be found in the context, say "I don't have that information."
+- Never invent data, statistics, or sources. Only reference sources actually listed below.
+- Keep the answer concise and natural.
+
+Context:
+{context}"""
+
+NO_CONTEXT_GUARD = """
+
+Important: You do NOT have access to any company documents or knowledge base.
+- Never fabricate citations such as [filename.md], document names, statistics, or company details.
+- If you do not know or cannot verify the answer, say so honestly (e.g. "I don't have that information.")."""
+
+
+def build_context(retrieval: list[dict]) -> str:
+    return "\n\n".join(
+        f"[Source: {r['source']}]\n{r['text']}" for r in retrieval
+    )
 
 
 @app.on_event("startup")
@@ -162,20 +187,49 @@ def chat(req: ChatRequest):
                 "Answer the user's question naturally using this data.",
             },
         ]
+
+        trimmed = trim_messages(messages)
+
+        completion = client.chat.completions.create(
+            model="openrouter/free",
+            messages=trimmed,
+        )
+        reply = completion.choices[0].message.content
     else:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            *history,
-            {"role": "user", "content": req.message},
-        ]
+        retrieval = retrieve(req.message, k=RAG_TOP_K, client=client)
+        if retrieval:
+            messages = [
+                {
+                    "role": "system",
+                    "content": RAG_SYSTEM_PROMPT.format(
+                        context=build_context(retrieval)
+                    ),
+                },
+                *history,
+                {"role": "user", "content": req.message},
+            ]
 
-    trimmed = trim_messages(messages)
+            trimmed = trim_messages(messages)
 
-    completion = client.chat.completions.create(
-        model="openrouter/free",
-        messages=trimmed,
-    )
-    reply = completion.choices[0].message.content
+            completion = client.chat.completions.create(
+                model="openrouter/free",
+                messages=trimmed,
+            )
+            reply = completion.choices[0].message.content
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt + NO_CONTEXT_GUARD},
+                *history,
+                {"role": "user", "content": req.message},
+            ]
+
+            trimmed = trim_messages(messages)
+
+            completion = client.chat.completions.create(
+                model="openrouter/free",
+                messages=trimmed,
+            )
+            reply = completion.choices[0].message.content
 
     save_message(req.session_id, req.user_id, "assistant", reply)
 
