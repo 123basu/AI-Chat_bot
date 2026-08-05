@@ -1,7 +1,98 @@
 .app-layout {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* ── Auth screen ── */
+.auth-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: #f0f2f5;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 32px 28px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+}
+
+.auth-card h1 {
+  margin: 0 0 20px;
+  font-size: 22px;
+  text-align: center;
+  color: #333;
+}
+
+.auth-tabs {
+  display: flex;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 10px;
+  background: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #555;
+}
+
+.auth-tab.active {
+  background: #007bff;
+  color: #fff;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-form input {
+  padding: 12px 14px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: #007bff;
+}
+
+.auth-error {
+  margin: 0;
+  color: #dc3545;
+  font-size: 14px;
+}
+
+.auth-submit {
+  padding: 12px;
+  background: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.auth-submit:disabled {
+  background: #999;
+  cursor: not-allowed;
 }
 
 /* ── Sidebar ── */
@@ -11,7 +102,7 @@
   display: flex;
   flex-direction: column;
   border-right: 1px solid #ddd;
-  transition: width 0.2s;
+  transition: transform 0.25s ease;
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -19,6 +110,39 @@
 .sidebar.closed {
   width: 0;
   border: none;
+}
+
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #ddd;
+}
+
+.sidebar-email {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logout-btn {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #555;
+  flex-shrink: 0;
+}
+
+.logout-btn:hover {
+  background: #e0e2e6;
 }
 
 .new-chat-btn {
@@ -113,6 +237,11 @@
   font-family: inherit;
 }
 
+/* ── Backdrop (mobile) ── */
+.backdrop {
+  display: none;
+}
+
 /* ── Main area ── */
 .main-area {
   flex: 1;
@@ -191,6 +320,7 @@
   word-wrap: break-word;
   font-size: 15px;
   line-height: 1.4;
+  white-space: pre-wrap;
 }
 
 .bubble.user {
@@ -245,4 +375,57 @@
 .input-row button:disabled {
   background: #999;
   cursor: not-allowed;
+}
+
+/* ── Mobile ── */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 200;
+    width: 260px;
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.2);
+  }
+
+  .backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 150;
+  }
+
+  .bubble {
+    max-width: 85%;
+  }
+
+  .input-row {
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .top-header {
+    padding: 14px 16px;
+  }
+
+  .top-header h1 {
+    font-size: 18px;
+  }
+
+  .menu-toggle {
+    left: 12px;
+    font-size: 22px;
+  }
+
+  .chat-box {
+    padding: 14px;
+  }
 }

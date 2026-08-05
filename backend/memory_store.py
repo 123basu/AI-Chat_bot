@@ -48,9 +48,26 @@ def init_db():
             PRIMARY KEY (source, chunk_id)
         );
 
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            is_blocked INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS tokens (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
         CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id);
+        CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
     """)
     conn.commit()
     conn.close()
@@ -152,6 +169,113 @@ def get_all_facts(user_id: str) -> dict:
     ).fetchall()
     conn.close()
     return {r["fact_key"]: r["fact_value"] for r in rows}
+
+
+def create_user(email: str, password_hash: str) -> int:
+    conn = get_connection()
+    cur = conn.execute(
+        "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+        (email, password_hash),
+    )
+    conn.commit()
+    user_id = cur.lastrowid
+    conn.close()
+    return user_id
+
+
+def get_user_by_email(email: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, email, password_hash, is_blocked, created_at, last_login FROM users WHERE email = ?",
+        (email,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, email, is_blocked, created_at, last_login FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_last_login(user_id: int):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (user_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_token(token: str, user_id: int):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO tokens (token, user_id) VALUES (?, ?)", (token, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_user_by_token(token: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT u.id, u.email, u.is_blocked, u.created_at, u.last_login
+           FROM tokens t
+           JOIN users u ON u.id = t.user_id
+           WHERE t.token = ?""",
+        (token,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_token(token: str):
+    conn = get_connection()
+    conn.execute("DELETE FROM tokens WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def delete_tokens_for_user(user_id: int):
+    conn = get_connection()
+    conn.execute("DELETE FROM tokens WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_user_blocked(user_id: int, blocked: bool):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET is_blocked = ? WHERE id = ?", (1 if blocked else 0, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_session_user(session_id: str) -> str | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT user_id FROM sessions WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    conn.close()
+    return row["user_id"] if row else None
+
+
+def list_all_users() -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT u.id, u.email, u.is_blocked, u.created_at, u.last_login,
+                  (SELECT COUNT(*) FROM messages m WHERE m.user_id = u.id) as message_count
+           FROM users u
+           ORDER BY u.created_at DESC""",
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_chunk_embedding(source: str, chunk_id: int) -> list[float] | None:
