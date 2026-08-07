@@ -4,7 +4,7 @@ import json
 import secrets
 import hashlib
 from fastapi import FastAPI, Depends, HTTPException, Header
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
@@ -57,6 +57,15 @@ FACT_EXTRACT_INTERVAL = 3
 RAG_TOP_K = 3
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
 def hash_password(password: str) -> str:
@@ -411,7 +420,7 @@ def register(req: AuthRequest):
 def login(req: AuthRequest):
     email = req.email.strip().lower()
     user = get_user_by_email(email)
-    if not user or not verify_password(req.password, user["password_hash"]):
+    if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if user["is_blocked"]:
         raise HTTPException(status_code=403, detail="Account is blocked")
@@ -431,6 +440,89 @@ def logout(authorization: str = Header(None)):
     if authorization and authorization.startswith("Bearer "):
         delete_token(authorization[len("Bearer "):].strip())
     return {"status": "ok"}
+
+
+def _issue_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    create_token(token, user_id)
+    update_last_login(user_id)
+    return token
+
+
+def _oauth_redirect():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_REDIRECT_URI:
+        raise HTTPException(status_code=503, detail="Google auth is not configured")
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    import urllib.parse
+    qs = urllib.parse.urlencode(params)
+    return f"{GOOGLE_AUTH_URL}?{qs}"
+
+
+@app.get("/auth/google")
+def google_login():
+    return RedirectResponse(_oauth_redirect())
+
+
+@app.get("/auth/google/callback")
+def google_callback(code: str = "", error: str = ""):
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google error: {error}")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code")
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
+        raise HTTPException(status_code=503, detail="Google auth is not configured")
+
+    import httpx
+    token_resp = httpx.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        },
+        timeout=30,
+    )
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to get Google token")
+
+    access_token = token_resp.json()["access_token"]
+    info_resp = httpx.get(
+        GOOGLE_USERINFO_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=30,
+    )
+    if info_resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to fetch Google profile")
+
+    info = info_resp.json()
+    email = (info.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    user = get_user_by_email(email)
+    if user:
+        user_id = user["id"]
+        if user["is_blocked"]:
+            raise HTTPException(status_code=403, detail="Account is blocked")
+    else:
+        user_id = create_user(email, password_hash=None, name=info.get("name"), provider="google")
+
+    token = _issue_token(user_id)
+
+    if not FRONTEND_URL:
+        raise HTTPException(status_code=503, detail="FRONTEND_URL is not configured")
+    base = FRONTEND_URL.rstrip("/")
+    qs = f"token={token}&email={email}&user_id={user_id}"
+    return RedirectResponse(f"{base}/?{qs}")
 
 
 @app.get("/admin/users", response_model=AdminUsersResponse)
