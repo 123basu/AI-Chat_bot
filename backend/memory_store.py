@@ -315,11 +315,17 @@ def set_user_blocked(user_id, blocked):
 def list_all_users():
     with _connection() as conn:
         msgs_user_id = "m.user_id::int" if IS_PG else "m.user_id"
-        return conn.query(
+        rows = conn.query(
             f"""SELECT u.id, u.email, u.is_blocked, u.created_at, u.last_login, u.auth_provider,
                       (SELECT COUNT(*) FROM messages m WHERE {msgs_user_id} = u.id) as message_count
                FROM users u ORDER BY u.created_at DESC""",
         )
+        for r in rows:
+            for col in ("created_at", "last_login"):
+                val = r.get(col)
+                if val is not None and not isinstance(val, str):
+                    r[col] = val.isoformat()
+        return rows
 
 
 # -------------------- tokens --------------------
