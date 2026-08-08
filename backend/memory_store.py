@@ -1,26 +1,29 @@
 import os
 import json
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 IS_PG = bool(DATABASE_URL)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "chat_memory.db")
 
 
-def _build_pg_dsn() -> str:
-    """Normalize the DATABASE_URL DSN so connections are reliable on free tiers."""
-    dsn = DATABASE_URL
-    sep = "" if "?" in dsn else "?"
-    params = [
-        "connect_timeout=10",
-        "keepalives=1",
-        "keepalives_idle=30",
-        "keepalives_interval=60",
-        "keepalives_count=5",
-    ]
-    if "sslmode" not in dsn and "localhost" not in dsn and "127.0.0.1" not in dsn:
-        params.append("sslmode=require")
-    return dsn + sep + "&".join(params)
+def _pg_connect_kwargs() -> dict:
+    """Connection options passed to psycopg2 as native keyword args.
+
+    Never string-edit the DATABASE_URL: libpq itself can mis-parse a
+    hand-concatenated URI (e.g. a channel_binding parameter with an extra
+    separator), which would fail with a ProgrammingError at startup.
+    """
+    kwargs = {
+        "connect_timeout": 10,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 60,
+        "keepalives_count": 5,
+    }
+    if "neon" in DATABASE_URL.lower() and "sslmode" not in DATABASE_URL.lower():
+        kwargs["sslmode"] = "require"
+    return kwargs
 
 
 def get_connection():
@@ -28,7 +31,7 @@ def get_connection():
     if IS_PG:
         import psycopg2
 
-        conn = psycopg2.connect(_build_pg_dsn())
+        conn = psycopg2.connect(DATABASE_URL, **_pg_connect_kwargs())
         conn.autocommit = True
         return _PGConn(conn)
     else:
