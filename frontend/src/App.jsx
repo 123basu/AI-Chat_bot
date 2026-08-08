@@ -78,9 +78,11 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: authEmail, password: authPassword }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
       if (!res.ok) {
-        setAuthError(data.detail || "Request failed");
+        setAuthError(data.detail || `Request failed (HTTP ${res.status})`);
         return;
       }
       finishAuth(data);
@@ -108,15 +110,21 @@ function App() {
 
   function loadSessions() {
     fetch(`/api/sessions`, { headers: authHeaders() })
-      .then((r) => r.json())
-      .then((data) => setSessions(data.sessions || []))
+      .then((r) => r.text())
+      .then((text) => {
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch {}
+        setSessions(data.sessions || []);
+      })
       .catch(() => {});
   }
 
   async function loadMessages(sid) {
     try {
       const res = await fetch(`/api/chat/${sid}/messages`, { headers: authHeaders() });
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
       setMessages(data.messages || []);
     } catch {
       setMessages([]);
@@ -138,8 +146,12 @@ function App() {
           session_id: sessionId,
         }),
       });
-      const data = await res.json();
-      const replyText = res.ok ? data.reply : data.detail || "Server error";
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
+      const replyText = res.ok
+        ? data.reply || "No reply"
+        : data.detail || `Server error (HTTP ${res.status})`;
       setMessages((prev) => [...prev, { role: "assistant", content: replyText }]);
       loadSessions();
     } catch {
