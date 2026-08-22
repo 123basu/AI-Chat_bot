@@ -1,8 +1,10 @@
 # AI Chat Assistant
 
-A chat application using React + Vite (frontend) and FastAPI (backend) with
-OpenRouter API. Features persistent memory (SQLite), long-term fact extraction,
-and a basic tool-calling AI Agent system.
+A chat application using React + Vite (frontend) and FastAPI (backend). It runs
+on a **local LLM via Ollama** by default (OpenRouter is supported as an
+alternative). Features user accounts, persistent memory (SQLite), long-term fact
+extraction, company-document RAG (`@company`), and a basic tool-calling AI Agent
+system.
 
 ---
 
@@ -70,7 +72,8 @@ AI-Chat/
 
 - Python 3.10+
 - Node.js 18+
-- OpenRouter API key (https://openrouter.ai/keys)
+- [Ollama](https://ollama.com) running locally with a chat model
+  (e.g. `qwen3:4b`)
 
 ### Backend
 
@@ -89,7 +92,19 @@ pip install -r requirements.txt
 Create `backend/.env`:
 
 ```
-OPENROUTER_API_KEY=your_key_here
+# Which LLM backend to use: "ollama" (local) or "openrouter" (cloud)
+LLM_BACKEND=ollama
+
+# Ollama settings (used when LLM_BACKEND=ollama)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:4b
+
+# OpenRouter settings (used when LLM_BACKEND=openrouter)
+# OPENROUTER_API_KEY=your_key_here
+# OPENROUTER_MODEL=openrouter/free
+
+# Admin panel key (optional, required to use /admin)
+# ADMIN_PASSWORD=change_me
 ```
 
 Run the server:
@@ -97,6 +112,9 @@ Run the server:
 ```bash
 uvicorn main:app --reload
 ```
+
+On first startup the SQLite database (`backend/chat_memory.db`) is created
+automatically.
 
 ### Frontend
 
@@ -107,6 +125,62 @@ npm run dev
 ```
 
 Open http://localhost:5173 in your browser.
+
+---
+
+## Local LLM with Ollama
+
+All model calls go through `backend/llm.py`. It reads three env vars:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `LLM_BACKEND` | `ollama` | `ollama` (local) or `openrouter` (cloud) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama's local HTTP server |
+| `OLLAMA_MODEL` | `qwen3:4b` | Which installed model to use |
+
+### How Ollama + OpenRouter compare
+
+Both expose the same idea — you send a list of `messages` with `role`/`content`
+and get back the model's reply — but:
+
+- **OpenRouter** is a *cloud* API. You POST JSON to
+  `https://openrouter.ai/api/v1` and the model runs on their servers.
+- **Ollama** is a *local* server. It runs the model on **your** machine at
+  `http://localhost:11434`.
+
+Under the hood `llm.py` calls Ollama's native endpoint `POST /api/chat` with:
+
+```json
+{
+  "model": "qwen3:4b",
+  "messages": [{"role": "user", "content": "hi"}],
+  "stream": false,
+  "think": false
+}
+```
+
+### qwen3 "thinking mode"
+
+`qwen3` models think before answering. When thinking is enabled they dump their
+reasoning into a separate `reasoning` field and can spend the whole token budget
+there, returning an empty `content`. That's why `llm.py` always sends
+`"think": false` — the model answers directly. If you switch to a model without
+thinking (e.g. `llama3.2`, `qwen2.5`), the flag is simply ignored.
+
+### Switch the model
+
+```bash
+ollama pull llama3.2        # download a new model
+ollama list                 # see installed models
+```
+
+Then set `OLLAMA_MODEL=llama3.2` in `backend/.env` and restart the backend.
+
+### Switch back to OpenRouter
+
+Set `LLM_BACKEND=openrouter` and add your `OPENROUTER_API_KEY` in
+`backend/.env`. The `llm.py` helper lazily builds an OpenAI client pointing at
+OpenRouter, so a missing key no longer prevents the server from starting.
 
 ---
 
@@ -207,12 +281,19 @@ Every tool module must export:
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
-| `POST` | `/chat` | Send a message (auto-detects tool usage) |
+| `POST` | `/auth/register` | Create an account, returns a bearer token |
+| `POST` | `/auth/login` | Log in, returns a bearer token |
+| `POST` | `/auth/logout` | Invalidate the bearer token |
+| `GET` | `/auth/me` | Get the current user |
+| `POST` | `/chat` | Send a message (auto-detects tool usage / `@company`) |
 | `POST` | `/reset` | Clear conversation for a session |
 | `GET` | `/chat/{session_id}/messages` | Load messages for a session |
-| `GET` | `/sessions/{user_id}` | List all sessions for a user |
+| `GET` | `/sessions` | List all sessions for the current user |
 | `DELETE` | `/chat/{session_id}` | Delete a session and its messages |
 | `PATCH` | `/chat/{session_id}/rename` | Rename a session |
+| `GET` | `/admin` | Admin panel (requires `ADMIN_PASSWORD`) |
+| `GET` | `/admin/users` | List users (admin) |
+| `POST` | `/admin/users/{user_id}/block` | Block/unblock a user (admin) |
 
 ### POST /chat
 
