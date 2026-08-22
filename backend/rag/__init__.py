@@ -1,7 +1,6 @@
 from .loader import load_documents
 from .chunker import chunk_document
 from .keyword_search import search as keyword_search
-from . import embeddings
 
 _chunks = None
 
@@ -17,19 +16,11 @@ def _ensure_index() -> list[dict]:
     return _chunks
 
 
-def retrieve(question: str, k: int = 3, client=None) -> list[dict]:
+def retrieve(question: str, k: int = 3) -> list[dict]:
     """Return the top-k chunks relevant to the question.
 
-    When a client is provided, retrieval uses semantic embeddings
-    (cosine similarity). If embedding fails for any reason, it silently
-    falls back to keyword search.
-
-    Each result has: {"source", "chunk_id", "text", "score"}.
+    Uses lightweight keyword search (token overlap) so it needs no
+    embedding model. Each result has: {"source", "chunk_id", "text", "score"}.
     """
     chunks = _ensure_index()
-    if client is not None:
-        try:
-            return embeddings.search(client, chunks, question, k)
-        except Exception:
-            pass
     return keyword_search(chunks, question, k)

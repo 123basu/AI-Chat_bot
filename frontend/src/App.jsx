@@ -2,18 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import "./App.css";
 
 function App() {
-  const [token, setToken] = useState(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("token");
-    if (fromUrl) {
-      localStorage.setItem("ai-chat-token", fromUrl);
-      const email = new URLSearchParams(window.location.search).get("email") || "";
-      const uid = Number(new URLSearchParams(window.location.search).get("user_id")) || null;
-      localStorage.setItem("ai-chat-user", JSON.stringify({ id: uid, email }));
-      window.history.replaceState({}, "", window.location.pathname);
-      return fromUrl;
-    }
-    return localStorage.getItem("ai-chat-token");
-  });
+  const [token, setToken] = useState(() => localStorage.getItem("ai-chat-token"));
 
   const [user, setUser] = useState(() => {
     try {
@@ -249,11 +238,6 @@ function App() {
               Sign up
             </button>
           </div>
-          <button className="google-btn" type="button" onClick={() => (window.location.href = "/api/auth/google")}>
-            <span className="google-icon">G</span>
-            Continue with Google
-          </button>
-          <div className="auth-divider">or use email</div>
           <form className="auth-form" onSubmit={handleAuth}>
             <input
               type="email"

@@ -4,11 +4,11 @@ import json
 import secrets
 import hashlib
 from fastapi import FastAPI, Depends, HTTPException, Header
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from openai import OpenAI
 from dotenv import load_dotenv
+from llm import chat_completion
 from memory_store import (
     init_db,
     create_session,
@@ -37,11 +37,6 @@ from rag import retrieve
 
 load_dotenv()
 
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-)
-
 app = FastAPI()
 
 app.add_middleware(
@@ -57,15 +52,6 @@ FACT_EXTRACT_INTERVAL = 3
 RAG_TOP_K = 3
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "")
-
-GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
 def hash_password(password: str) -> str:
@@ -167,9 +153,8 @@ def extract_facts_from_messages(user_id: str, messages: list[dict]):
         return
     recent = messages[-FACT_EXTRACT_INTERVAL * 2:]
     try:
-        completion = client.chat.completions.create(
-            model="openrouter/free",
-            messages=[
+        text = chat_completion(
+            [
                 {
                     "role": "system",
                     "content": "Extract personal facts about the user from the conversation below. "
@@ -187,8 +172,8 @@ def extract_facts_from_messages(user_id: str, messages: list[dict]):
                     ),
                 },
             ],
+            max_tokens=512,
         )
-        text = completion.choices[0].message.content.strip()
         text = text.replace("```json", "").replace("```", "").strip()
         facts = json.loads(text)
         for key, value in facts.items():
@@ -302,13 +287,9 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
 
         trimmed = trim_messages(messages)
 
-        completion = client.chat.completions.create(
-            model="openrouter/free",
-            messages=trimmed,
-        )
-        reply = completion.choices[0].message.content
+        reply = chat_completion(trimmed)
     elif uses_rag:
-        retrieval = retrieve(clean_message, k=RAG_TOP_K, client=client)
+        retrieval = retrieve(clean_message, k=RAG_TOP_K)
         if retrieval:
             messages = [
                 {
@@ -323,11 +304,7 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
 
             trimmed = trim_messages(messages)
 
-            completion = client.chat.completions.create(
-                model="openrouter/free",
-                messages=trimmed,
-            )
-            reply = completion.choices[0].message.content
+            reply = chat_completion(trimmed)
         else:
             reply = RAG_NOT_FOUND
     else:
@@ -339,11 +316,7 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
 
         trimmed = trim_messages(messages)
 
-        completion = client.chat.completions.create(
-            model="openrouter/free",
-            messages=trimmed,
-        )
-        reply = completion.choices[0].message.content
+        reply = chat_completion(trimmed)
 
     save_message(req.session_id, user_id, "assistant", reply)
 
@@ -440,89 +413,6 @@ def logout(authorization: str = Header(None)):
     if authorization and authorization.startswith("Bearer "):
         delete_token(authorization[len("Bearer "):].strip())
     return {"status": "ok"}
-
-
-def _issue_token(user_id: int) -> str:
-    token = secrets.token_urlsafe(32)
-    create_token(token, user_id)
-    update_last_login(user_id)
-    return token
-
-
-def _oauth_redirect():
-    if not GOOGLE_CLIENT_ID or not GOOGLE_REDIRECT_URI:
-        raise HTTPException(status_code=503, detail="Google auth is not configured")
-    params = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "access_type": "online",
-        "prompt": "select_account",
-    }
-    import urllib.parse
-    qs = urllib.parse.urlencode(params)
-    return f"{GOOGLE_AUTH_URL}?{qs}"
-
-
-@app.get("/auth/google")
-def google_login():
-    return RedirectResponse(_oauth_redirect())
-
-
-@app.get("/auth/google/callback")
-def google_callback(code: str = "", error: str = ""):
-    if error:
-        raise HTTPException(status_code=400, detail=f"Google error: {error}")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing code")
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
-        raise HTTPException(status_code=503, detail="Google auth is not configured")
-
-    import httpx
-    token_resp = httpx.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "code": code,
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri": GOOGLE_REDIRECT_URI,
-            "grant_type": "authorization_code",
-        },
-        timeout=30,
-    )
-    if token_resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Failed to get Google token")
-
-    access_token = token_resp.json()["access_token"]
-    info_resp = httpx.get(
-        GOOGLE_USERINFO_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=30,
-    )
-    if info_resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Failed to fetch Google profile")
-
-    info = info_resp.json()
-    email = (info.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="Google account has no email")
-
-    user = get_user_by_email(email)
-    if user:
-        user_id = user["id"]
-        if user["is_blocked"]:
-            raise HTTPException(status_code=403, detail="Account is blocked")
-    else:
-        user_id = create_user(email, password_hash=None, name=info.get("name"), provider="google")
-
-    token = _issue_token(user_id)
-
-    if not FRONTEND_URL:
-        raise HTTPException(status_code=503, detail="FRONTEND_URL is not configured")
-    base = FRONTEND_URL.rstrip("/")
-    qs = f"token={token}&email={email}&user_id={user_id}"
-    return RedirectResponse(f"{base}/?{qs}")
 
 
 @app.get("/admin/users", response_model=AdminUsersResponse)
