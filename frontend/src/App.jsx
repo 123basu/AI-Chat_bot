@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import "./App.css";
+import { useTheme } from "./hooks/useTheme";
+import AuthScreen from "./components/AuthScreen";
+import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
+import ChatArea from "./components/ChatArea";
+import ChatComposer from "./components/ChatComposer";
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("ai-chat-token"));
@@ -15,13 +21,20 @@ function App() {
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => typeof window !== "undefined" && window.innerWidth > 768
+  );
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
+  const [feedback, setFeedback] = useState({});
   const chatEnd = useRef(null);
   const editInputRef = useRef(null);
+  const composerRef = useRef(null);
+
+  const { theme, setTheme } = useTheme();
 
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
@@ -31,7 +44,7 @@ function App() {
 
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, loading]);
 
   useEffect(() => {
     if (token) loadSessions();
@@ -53,6 +66,7 @@ function App() {
     setUser({ id: data.user_id, email: data.email });
     setSessionId(crypto.randomUUID());
     setMessages([]);
+    setFeedback({});
     setAuthError("");
   }
 
@@ -94,6 +108,7 @@ function App() {
     setUser(null);
     setSessions([]);
     setMessages([]);
+    setFeedback({});
     setSessionId(crypto.randomUUID());
   }
 
@@ -115,16 +130,18 @@ function App() {
       let data = {};
       try { data = text ? JSON.parse(text) : {}; } catch {}
       setMessages(data.messages || []);
+      setFeedback({});
     } catch {
       setMessages([]);
     }
   }
 
-  async function handleSend() {
-    if (!input.trim()) return;
-    const userMsg = { role: "user", content: input };
+  async function sendMessage(content) {
+    if (!content.trim()) return;
+    const userMsg = { role: "user", content };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    setHistoryIndex(-1);
     setLoading(true);
     try {
       const res = await fetch("/api/chat", {
@@ -153,14 +170,40 @@ function App() {
     }
   }
 
+  function handleSend() {
+    if (!input.trim()) return;
+    sendMessage(input);
+  }
+
+  function handleRegenerate() {
+    if (loading) return;
+    const userMsgs = messages.filter((m) => m.role === "user");
+    const last = userMsgs[userMsgs.length - 1];
+    if (!last) return;
+    sendMessage(last.content);
+  }
+
+  function handleFeedback(index, value) {
+    setFeedback((prev) => ({ ...prev, [index]: value }));
+  }
+
+  function handleSuggestion(prompt) {
+    setInput(prompt);
+    composerRef.current?.focus();
+  }
+
   function handleNewChat() {
     setMessages([]);
+    setFeedback({});
     setSessionId(crypto.randomUUID());
     setSidebarOpen(false);
   }
 
   async function handleSelectSession(sid) {
-    if (sid === sessionId) return;
+    if (sid === sessionId) {
+      setSidebarOpen(false);
+      return;
+    }
     setSessionId(sid);
     await loadMessages(sid);
     setSidebarOpen(false);
@@ -209,163 +252,109 @@ function App() {
     if (e.key === "Escape") setEditingId(null);
   }
 
-  function handleKeyDown(e) {
-    if (e.key === "Enter") handleSend();
+  function handleComposerKeyDown(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+      return;
+    }
+
+    // Arrow-up/down recall of previous prompts — only when the caret sits at
+    // the very start/end so multiline caret movement still works naturally.
+    const el = e.currentTarget;
+    const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+    const atEnd = el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+
+    if (e.key === "ArrowUp" && atStart) {
+      const userMsgs = messages.filter((m) => m.role === "user");
+      if (userMsgs.length === 0) return;
+      e.preventDefault();
+      const next = historyIndex === -1 ? userMsgs.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(next);
+      setInput(userMsgs[next].content);
+    } else if (e.key === "ArrowDown" && atEnd) {
+      if (historyIndex === -1) return;
+      e.preventDefault();
+      const userMsgs = messages.filter((m) => m.role === "user");
+      if (historyIndex >= userMsgs.length - 1) {
+        setHistoryIndex(-1);
+        setInput("");
+      } else {
+        const next = historyIndex + 1;
+        setHistoryIndex(next);
+        setInput(userMsgs[next].content);
+      }
+    }
   }
 
   if (!token) {
     return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <h1>AI made by AI</h1>
-          <div className="auth-tabs">
-            <button
-              className={`auth-tab ${authMode === "login" ? "active" : ""}`}
-              onClick={() => {
-                setAuthMode("login");
-                setAuthError("");
-              }}
-            >
-              Log in
-            </button>
-            <button
-              className={`auth-tab ${authMode === "register" ? "active" : ""}`}
-              onClick={() => {
-                setAuthMode("register");
-                setAuthError("");
-              }}
-            >
-              Sign up
-            </button>
-          </div>
-          <form className="auth-form" onSubmit={handleAuth}>
-            <input
-              type="email"
-              placeholder="Email"
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              autoComplete="email"
-              required
-            />
-            <input
-              type="password"
-              placeholder="Password (min 6 chars)"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-              autoComplete={authMode === "login" ? "current-password" : "new-password"}
-              minLength={6}
-              required
-            />
-            {authError && <p className="auth-error">{authError}</p>}
-            <button className="auth-submit" type="submit" disabled={authLoading}>
-              {authLoading ? "Please wait..." : authMode === "login" ? "Log in" : "Create account"}
-            </button>
-          </form>
-        </div>
-      </div>
+      <AuthScreen
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        authEmail={authEmail}
+        setAuthEmail={setAuthEmail}
+        authPassword={authPassword}
+        setAuthPassword={setAuthPassword}
+        authError={authError}
+        authLoading={authLoading}
+        handleAuth={handleAuth}
+      />
     );
   }
 
   return (
     <div className="app-layout">
-      {sidebarOpen && <div className="backdrop" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
-        <div className="sidebar-user">
-          <span className="sidebar-email" title={user?.email}>{user?.email}</span>
-          <button className="logout-btn" onClick={handleLogout}>
-            Logout
-          </button>
-        </div>
-        <button className="new-chat-btn" onClick={handleNewChat}>
-          + New Chat
-        </button>
-        <div className="history-list">
-          {sessions.map((s) => (
-            <div
-              key={s.session_id}
-              className={`history-item ${s.session_id === sessionId ? "active" : ""}`}
-            >
-              <div
-                className="history-item-main"
-                onClick={() => handleSelectSession(s.session_id)}
-              >
-                {editingId === s.session_id ? (
-                  <input
-                    ref={editInputRef}
-                    className="rename-input"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={() => submitRename(s.session_id)}
-                    onKeyDown={(e) => handleRenameKeyDown(e, s.session_id)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="history-title">{s.title}</span>
-                )}
-              </div>
-              <div className="history-actions">
-                <button
-                  className="action-btn"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startRename(s);
-                  }}
-                >
-                  ✏️
-                </button>
-                <button
-                  className="action-btn"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(s.session_id);
-                  }}
-                >
-                  🗑️
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </aside>
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        sessions={sessions}
+        sessionId={sessionId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        onDelete={handleDelete}
+        editingId={editingId}
+        editTitle={editTitle}
+        setEditTitle={setEditTitle}
+        startRename={startRename}
+        submitRename={submitRename}
+        handleRenameKeyDown={handleRenameKeyDown}
+        editInputRef={editInputRef}
+        user={user}
+        onLogout={handleLogout}
+        theme={theme}
+        setTheme={setTheme}
+      />
 
       <div className="main-area">
-        <header className="top-header">
-          <button className="menu-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            ☰
-          </button>
-          <h1>AI made by AI</h1>
-          <div className="header-spacer" />
-        </header>
+        <Header
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          sidebarOpen={sidebarOpen}
+          theme={theme}
+          setTheme={setTheme}
+        />
 
-        <div className="chat-box">
-          {messages.length === 0 && <p className="greeting">Hello!</p>}
-          {messages.map((msg, i) => (
-            <div key={i} className={`message ${msg.role}`}>
-              <div className={`bubble ${msg.role}`}>{msg.content}</div>
-            </div>
-          ))}
-          {loading && (
-            <div className="message assistant">
-              <div className="bubble assistant thinking">Thinking...</div>
-            </div>
-          )}
-          <div ref={chatEnd} />
-        </div>
+        <ChatArea
+          messages={messages}
+          loading={loading}
+          chatEndRef={chatEnd}
+          onSuggestion={handleSuggestion}
+          feedback={feedback}
+          onFeedback={handleFeedback}
+          onRegenerate={handleRegenerate}
+        />
 
-        <div className="input-row">
-          <input
-            type="text"
-            placeholder="Type your message..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button onClick={handleSend} disabled={loading}>
-            Send
-          </button>
-        </div>
+        <ChatComposer
+          input={input}
+          setInput={(value) => {
+            setInput(value);
+            setHistoryIndex(-1);
+          }}
+          onSend={handleSend}
+          onKeyDown={handleComposerKeyDown}
+          loading={loading}
+          inputRef={composerRef}
+        />
       </div>
     </div>
   );
