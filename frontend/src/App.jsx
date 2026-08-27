@@ -20,6 +20,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
+  const [mode, setMode] = useState("chat");
   const chatEnd = useRef(null);
   const editInputRef = useRef(null);
 
@@ -133,6 +134,7 @@ function App() {
         body: JSON.stringify({
           message: userMsg.content,
           session_id: sessionId,
+          mode: mode,
         }),
       });
       const text = await res.text();
@@ -336,6 +338,16 @@ function App() {
             ☰
           </button>
           <h1>AI made by AI</h1>
+          <div className="mode-toggle">
+            <button
+              className={`mode-btn ${mode === "chat" ? "active" : ""}`}
+              onClick={() => setMode("chat")}
+            >Chat</button>
+            <button
+              className={`mode-btn ${mode === "data" ? "active" : ""}`}
+              onClick={() => setMode("data")}
+            >Data</button>
+          </div>
           <div className="header-spacer" />
         </header>
 
@@ -357,7 +369,7 @@ function App() {
         <div className="input-row">
           <input
             type="text"
-            placeholder="Type your message..."
+            placeholder={mode === "data" ? "Ask about your business data..." : "Type your message..."}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}

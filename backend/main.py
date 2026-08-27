@@ -34,6 +34,7 @@ from memory_store import (
 )
 from tools import route_tool
 from rag import retrieve
+from data_assistant import handle_data_query
 
 load_dotenv()
 
@@ -185,6 +186,7 @@ def extract_facts_from_messages(user_id: str, messages: list[dict]):
 class ChatRequest(BaseModel):
     message: str
     session_id: str
+    mode: str = "chat"
 
 
 class ChatResponse(BaseModel):
@@ -271,6 +273,11 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
         clean_message = req.message
 
     save_message(req.session_id, user_id, "user", clean_message)
+
+    if req.mode == "data":
+        reply = handle_data_query(clean_message)
+        save_message(req.session_id, user_id, "assistant", reply)
+        return ChatResponse(reply=reply)
 
     tool_result = route_tool(clean_message)
     if tool_result:

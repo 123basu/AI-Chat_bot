@@ -3,8 +3,8 @@ dist/
 .env
 __pycache__/
 *.pyc
-venv/
+env/
 .venv/
 DEPLOY.md
-*.db
+chat_memory.db
 session-ses_0338.md
