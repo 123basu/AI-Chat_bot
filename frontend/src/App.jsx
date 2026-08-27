@@ -1,9 +1,14 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
+import useTheme from "./useTheme";
+import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
+import ChatArea from "./components/ChatArea";
+import ChatComposer from "./components/ChatComposer";
+import SettingsPanel from "./components/SettingsPanel";
 import "./App.css";
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("ai-chat-token"));
-
   const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("ai-chat-user") || "null");
@@ -11,36 +16,31 @@ function App() {
       return null;
     }
   });
-
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [mode, setMode] = useState("chat");
-  const chatEnd = useRef(null);
-  const editInputRef = useRef(null);
-
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
 
+  const { preference: themePref, setTheme: setThemePref } = useTheme();
+
   useEffect(() => {
-    chatEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   useEffect(() => {
     if (token) loadSessions();
   }, [token]);
-
-  useEffect(() => {
-    if (editingId) editInputRef.current?.focus();
-  }, [editingId]);
 
   function authHeaders(extra = {}) {
     if (!token) return extra;
@@ -96,10 +96,11 @@ function App() {
     setSessions([]);
     setMessages([]);
     setSessionId(crypto.randomUUID());
+    setSidebarOpen(false);
   }
 
   function loadSessions() {
-    fetch(`/api/sessions`, { headers: authHeaders() })
+    fetch("/api/sessions", { headers: authHeaders() })
       .then((r) => r.text())
       .then((text) => {
         let data = {};
@@ -121,9 +122,10 @@ function App() {
     }
   }
 
-  async function handleSend() {
-    if (!input.trim()) return;
-    const userMsg = { role: "user", content: input };
+  async function handleSend(inputOverride) {
+    const msgText = (inputOverride || input).trim();
+    if (!msgText) return;
+    const userMsg = { role: "user", content: msgText };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setLoading(true);
@@ -177,9 +179,7 @@ function App() {
         setMessages([]);
       }
       loadSessions();
-    } catch {
-      // best-effort
-    }
+    } catch {}
   }
 
   function startRename(s) {
@@ -200,9 +200,7 @@ function App() {
         body: JSON.stringify({ title }),
       });
       loadSessions();
-    } catch {
-      // best-effort
-    }
+    } catch {}
     setEditingId(null);
   }
 
@@ -211,56 +209,64 @@ function App() {
     if (e.key === "Escape") setEditingId(null);
   }
 
-  function handleKeyDown(e) {
-    if (e.key === "Enter") handleSend();
+  function handleSuggestionClick(text) {
+    setInput(text);
   }
 
   if (!token) {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <h1>AI made by AI</h1>
+          <div className="auth-brand">
+            <span className="auth-brand-icon">✦</span>
+            <h1 className="auth-brand-title">AI made by AI</h1>
+            <p className="auth-brand-subtitle">Your intelligent chat assistant</p>
+          </div>
           <div className="auth-tabs">
             <button
               className={`auth-tab ${authMode === "login" ? "active" : ""}`}
-              onClick={() => {
-                setAuthMode("login");
-                setAuthError("");
-              }}
+              onClick={() => { setAuthMode("login"); setAuthError(""); }}
             >
               Log in
             </button>
             <button
               className={`auth-tab ${authMode === "register" ? "active" : ""}`}
-              onClick={() => {
-                setAuthMode("register");
-                setAuthError("");
-              }}
+              onClick={() => { setAuthMode("register"); setAuthError(""); }}
             >
               Sign up
             </button>
           </div>
           <form className="auth-form" onSubmit={handleAuth}>
-            <input
-              type="email"
-              placeholder="Email"
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              autoComplete="email"
-              required
-            />
-            <input
-              type="password"
-              placeholder="Password (min 6 chars)"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-              autoComplete={authMode === "login" ? "current-password" : "new-password"}
-              minLength={6}
-              required
-            />
-            {authError && <p className="auth-error">{authError}</p>}
+            <div className="auth-field">
+              <label htmlFor="auth-email" className="auth-label">Email</label>
+              <input
+                id="auth-email"
+                type="email"
+                placeholder="you@example.com"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                autoComplete="email"
+                required
+              />
+            </div>
+            <div className="auth-field">
+              <label htmlFor="auth-password" className="auth-label">Password</label>
+              <input
+                id="auth-password"
+                type="password"
+                placeholder={authMode === "register" ? "At least 6 characters" : "Enter your password"}
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                minLength={6}
+                required
+              />
+            </div>
+            {authError && <p className="auth-error" role="alert">{authError}</p>}
             <button className="auth-submit" type="submit" disabled={authLoading}>
-              {authLoading ? "Please wait..." : authMode === "login" ? "Log in" : "Create account"}
+              {authLoading ? (
+                <span className="auth-submit-loading">Please wait...</span>
+              ) : authMode === "login" ? "Log in" : "Create account"}
             </button>
           </form>
         </div>
@@ -270,115 +276,61 @@ function App() {
 
   return (
     <div className="app-layout">
-      {sidebarOpen && <div className="backdrop" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
-        <div className="sidebar-user">
-          <span className="sidebar-email" title={user?.email}>{user?.email}</span>
-          <button className="logout-btn" onClick={handleLogout}>
-            Logout
-          </button>
-        </div>
-        <button className="new-chat-btn" onClick={handleNewChat}>
-          + New Chat
-        </button>
-        <div className="history-list">
-          {sessions.map((s) => (
-            <div
-              key={s.session_id}
-              className={`history-item ${s.session_id === sessionId ? "active" : ""}`}
-            >
-              <div
-                className="history-item-main"
-                onClick={() => handleSelectSession(s.session_id)}
-              >
-                {editingId === s.session_id ? (
-                  <input
-                    ref={editInputRef}
-                    className="rename-input"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={() => submitRename(s.session_id)}
-                    onKeyDown={(e) => handleRenameKeyDown(e, s.session_id)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="history-title">{s.title}</span>
-                )}
-              </div>
-              <div className="history-actions">
-                <button
-                  className="action-btn"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startRename(s);
-                  }}
-                >
-                  ✏️
-                </button>
-                <button
-                  className="action-btn"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(s.session_id);
-                  }}
-                >
-                  🗑️
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </aside>
+      <Sidebar
+        sessions={sessions}
+        currentSessionId={sessionId}
+        editingId={editingId}
+        editTitle={editTitle}
+        sidebarOpen={sidebarOpen}
+        themePref={themePref}
+        onThemeChange={setThemePref}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        onDelete={handleDelete}
+        onStartRename={startRename}
+        onEditTitleChange={setEditTitle}
+        onSubmitRename={submitRename}
+        onRenameKeyDown={handleRenameKeyDown}
+        onClose={() => setSidebarOpen(false)}
+        onLogout={handleLogout}
+        onSettingsOpen={() => setSettingsOpen(true)}
+        user={user}
+      />
 
       <div className="main-area">
-        <header className="top-header">
-          <button className="menu-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            ☰
-          </button>
-          <h1>AI made by AI</h1>
-          <div className="mode-toggle">
-            <button
-              className={`mode-btn ${mode === "chat" ? "active" : ""}`}
-              onClick={() => setMode("chat")}
-            >Chat</button>
-            <button
-              className={`mode-btn ${mode === "data" ? "active" : ""}`}
-              onClick={() => setMode("data")}
-            >Data</button>
-          </div>
-          <div className="header-spacer" />
-        </header>
+        <Header
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          mode={mode}
+          onModeChange={setMode}
+          onSettingsOpen={() => setSettingsOpen(true)}
+          themePref={themePref}
+          onThemeChange={setThemePref}
+        />
 
-        <div className="chat-box">
-          {messages.length === 0 && <p className="greeting">Hello!</p>}
-          {messages.map((msg, i) => (
-            <div key={i} className={`message ${msg.role}`}>
-              <div className={`bubble ${msg.role}`}>{msg.content}</div>
-            </div>
-          ))}
-          {loading && (
-            <div className="message assistant">
-              <div className="bubble assistant thinking">Thinking...</div>
-            </div>
-          )}
-          <div ref={chatEnd} />
-        </div>
+        <ChatArea
+          messages={messages}
+          loading={loading}
+          mode={mode}
+          onSend={handleSuggestionClick}
+        />
 
-        <div className="input-row">
-          <input
-            type="text"
-            placeholder={mode === "data" ? "Ask about your business data..." : "Type your message..."}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button onClick={handleSend} disabled={loading}>
-            Send
-          </button>
-        </div>
+        <ChatComposer
+          input={input}
+          onInputChange={setInput}
+          onSend={() => handleSend()}
+          loading={loading}
+          mode={mode}
+        />
       </div>
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        themePref={themePref}
+        onThemeChange={setThemePref}
+        mode={mode}
+        onModeChange={setMode}
+      />
     </div>
   );
 }
